@@ -76,7 +76,7 @@ class SqlDbInterface(object):
 
         except Exception as sql_err:
             log.exception("SQL exception: {}".format(sql_err))
-            _last_tick[0] = None
+            _last_tick = [None]
 
         return _last_tick[0]
 
