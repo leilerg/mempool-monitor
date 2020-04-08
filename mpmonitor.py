@@ -65,15 +65,16 @@ def stop():
     log.info("Stopping mempool monitor")
 
     try:
-        with open(pid_file, "r") as f:
+        # with open(pid_file, "r") as f:
+        with open(PIDFILE, "r") as f:
             content = f.read()
         f.close()
         pid = int(content)
         log.info("Process PID obtained \n({})".format(PIDFILE))
 
     except FileNotFoundError as fnf_err:
-        print("WARNING - PID file not found, cannot stop daemon.\n({})".format(pid_file))
-        log.warning("WARNING - PID file not found, cannot stop daemon.\n({})".format(pid_file))
+        print("WARNING - PID file not found, cannot stop daemon.\n({})".format(PIDFILE))
+        log.warning("WARNING - PID file not found, cannot stop daemon.\n({})".format(PIDFILE))
         sys.exit()
 
 

@@ -77,7 +77,7 @@ class MempoolMonitor(object):
 
 
         while True:
-            # Connect to bitcoin node
+            # Insantiate rpc interface
             self.__btc_rpc_connect = AuthServiceProxy("http://{}:{}@{}:{}"
                                                       .format(self.__rpc_user,
                                                               self.__rpc_pass,
@@ -86,8 +86,29 @@ class MempoolMonitor(object):
                                                               timeout = self.__rpc_http_timeout))
 
 
-            # print("\ngetblockchaininfo:")
-            blockchain_info = self.__btc_rpc_connect.getblockchaininfo()
+            try:
+                blockchain_info = self.__btc_rpc_connect.getblockchaininfo()
+
+
+            except JSONRPCException as json_err:
+                log.exception(json_err)
+                log.info("Stopping daemon.")
+                print("Connection error: {}".format(json_err))
+                sys.exit()
+
+            except Exception as sto_err:
+                log.exception(sto_err)
+                if self.__bootstrap:
+                    log.info("Stopping daemon.")
+                    print("ERROR: Socket problem. Stopping daemon.")
+                    sys.exit()
+                else:
+                    time.sleep(int(self.__global_frequency))
+                    continue
+
+                
+
+            
             chain_height = blockchain_info["blocks"]
             bestblockhash = blockchain_info["bestblockhash"]
 
