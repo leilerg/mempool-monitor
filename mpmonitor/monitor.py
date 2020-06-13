@@ -89,65 +89,43 @@ class MempoolMonitor(object):
             try:
                 blockchain_info = self.__btc_rpc_connect.getblockchaininfo()
 
-
             except JSONRPCException as json_err:
-                log.exception(json_err)
-                log.info("Stopping daemon.")
-                print("Connection error: {}".format(json_err))
-                sys.exit()
+                log.exception("JSON-RPC `getblockchaininfo` error : ", exc_info=True)
+                log.exception("Resuming operation, skipping current query...")
+                time.sleep(int(self.__global_frequency))
+                continue
 
             except Exception as sto_err:
-                log.exception(sto_err)
-                if self.__bootstrap:
-                    log.info("Stopping daemon.")
-                    print("ERROR: Socket problem. Stopping daemon.")
-                    sys.exit()
-                else:
-                    time.sleep(int(self.__global_frequency))
-                    continue
-
+                log.exception("Unexpected exception in JSON-RPC `getblockchaininfo`:", exc_info=True)
+                log.exception("Resuming operation, skipping current query...")
+                time.sleep(int(self.__global_frequency))
+                continue
                 
-
             
             chain_height = blockchain_info["blocks"]
             bestblockhash = blockchain_info["bestblockhash"]
 
-            mempool = self.__btc_rpc_connect.getrawmempool(True)
+
+            try:
+                mempool = self.__btc_rpc_connect.getrawmempool(True)
+
+            except JSONRPCException as jsonrpc_err:
+                log.exception("JSON-RPC `getrawmempool` error : ", exc_info=True)
+                log.exception("Resuming operation, skipping current query...")
+                time.sleep(int(self.__global_frequency))
+                continue
+
+            except Exception as sto_err:
+                log.exception("Unexpected exception in JSON-RPC `getrawmempool`:", exc_info=True)
+                log.exception("Resuming operation, skipping current query...")
+                time.sleep(int(self.__global_frequency))
+                continue
 
 
+            # Runn bootstrapping code, if necessary
             if self.__bootstrap:
-                self.__chain_height = chain_height
-                self.__bestblockhash = bestblockhash
-                self.__mempool = mempool
-
-                __nr_ticks = self.db.get_last_tick()
-
-                log.info("Nr ticks in database: {}".format(__nr_ticks))
-
-                # If database not empty, increase nr ticks by one, for first dump
-                if __nr_ticks is not None:
-                    self.__nr_ticks += __nr_ticks+1
-
-
-                self.__bootstrap = False # Only need to bootstrap once...
-
-
-                # Dump mempool to database....
-                try:
-                    self.db.insert_mempool_txs(mempool, self.__nr_ticks, chain_height, MODE_INIT)
-
-                except Exception as err:
-                    # print("Error in SQL INSERT: {}".format(err))
-                    log.exception("SQL exception: {}".format(err))
-
-
-                log.info("Tick: {} - Chain Height: {}\nBest block: {}".format(self.__nr_ticks,
-                                                                              chain_height,
-                                                                              bestblockhash))
-
-
-                self.__nr_ticks += 1
-
+                self.__bootstrap = self.bootstrap_mempool_monitor(blockchain_info, mempool)
+                
                 time.sleep(int(self.__global_frequency))
                 continue
 
@@ -186,6 +164,50 @@ class MempoolMonitor(object):
 
 
             time.sleep(int(self.__global_frequency))
+
+
+    def bootstrap_mempool_monitor(self, blockchaininfo, mempool):
+        """
+        Bootstrap the mempool monitor - Only runs at start up, if not run before or if daemon got
+        stopped and then restarted.
+
+        NOTE: Returns False upon successfull bootstrap!!!!
+        To be used as   `self.__bootstrap = self.bootstrap_mempool_monitor`, which allows a simple 
+        `if self.__bootstrap` condition.
+        """
+        try:
+            __nr_ticks = self.db.get_last_tick()
+            
+        except Exception as last_tick_err:
+            log.exception("Exception in `get_last_tick`", exc_info=True)
+            # Return True - i.e. monitor bootstrap failed and will need to be re-run
+            return True
+
+        log.info("Nr ticks in database: {}".format(__nr_ticks))
+
+        self.__chain_height = blockchaininfo["blocks"]
+        self.__bestblockhash = blockchaininfo["bestblockhash"]
+        self.__mempool = mempool
+
+        # If database not empty, increase nr ticks by one, for first dump
+        if __nr_ticks is not None:
+            self.__nr_ticks += __nr_ticks+1
+
+        # Dump mempool to database....
+        try:
+            self.db.insert_mempool_txs(mempool, self.__nr_ticks, self.__chain_height, MODE_INIT)
+                
+        except Exception as err:
+            log.exception("SQL exception: ", exc_info=True)
+            return True
+
+
+        log.info("Tick: {} - Chain Height: {}\nBest block: {}".format(self.__nr_ticks,
+                                                                      self.__chain_height,
+                                                                      self.__bestblockhash))
+        self.__nr_ticks += 1
+
+        return False
 
 
 
