@@ -28,8 +28,20 @@ log = logging.getLogger(__file__)
 
 
 
-
 def get_logging_handles(logger):
+    """
+    Retrieves existing logging handles for `logger`. If all handles are not explicitly preserved
+    when starting the daemon it will cause conflicts with PidFile.
+
+    Parameters
+    ----------
+    logger : logger.root
+        The root logger
+
+    Returns
+    -------
+    handles : List of all open files used for logging
+    """
     handles = []
     for handler in logger.handlers:
         handles.append(handler.stream.fileno())
@@ -40,6 +52,9 @@ def get_logging_handles(logger):
 
 
 def start():
+    """
+    Starts the daemon and mempool monitor.
+    """
     # print("Starting Mempool Monitor")
     log.info("Starting Mempool Monitor")
 
@@ -62,6 +77,9 @@ def start():
     
 
 def stop():
+    """
+    Stops the daemon and the mempool monitor.
+    """
     log.info("Stopping mempool monitor")
 
     try:
@@ -106,6 +124,7 @@ if __name__ == "__main__":
         print("\tStart the daemon.\n")
         print("stop")
         print("\tStop the daemon.\n\n")
+        sys.exit()
 
     curr_dir = os.getcwd()
     pid_file = os.path.join(curr_dir, "mpmonitor.pid")
