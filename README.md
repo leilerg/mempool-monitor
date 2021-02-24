@@ -174,11 +174,21 @@ entered in the ```config.ini``` file.
 Collecting data
 ---------------
 
-If the above requirements are satisfied, to start collecting the data run simply
+If the above requirements are satisfied, to start collecting the data run simply:
 
 ```
-python3 mpmonitor.py
+python3 mpmonitor.py start
 ```
 
-That's it.
+To stop the data collection:
+
+```
+python3 mpmonitor.py stop
+```
+
+Simple help available as:
+
+```
+python3 mpmonitor.py --help
+```
 
