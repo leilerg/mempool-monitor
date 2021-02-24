@@ -1,5 +1,5 @@
 """
-Main file for the app
+MempoolMonitor class - Main class for the app.
 """
 import os
 import sys
@@ -9,7 +9,6 @@ import logging
 
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
-from mpmonitor.btc_rpc import BitcoinRPC
 from mpmonitor.sql_db_interface import *
 
 
@@ -17,6 +16,17 @@ log = logging.getLogger(__name__)
 
 
 def load_config():
+    """
+    Loads the config file.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    config : configparser.ConfigParser()
+    """
     config = None
     config_dir = os.path.dirname(os.path.realpath(__file__))
     # config_file = os.path.join(config_dir, os.pardir, "config.yaml")
@@ -29,17 +39,36 @@ def load_config():
 
     log.info("Config loaded.")
 
-
     return config
 
 
 class MempoolMonitor(object):
+    """
+    MempoolMonitor class - Starts the monitoring loop, requests mempool data from the bitcoin node,
+    and dumps the changes to SQL database.
+
+    Parameters
+    ----------
+    None (A configuration file is loaded during instantiation.)
+
+    Returns
+    -------
+    None
+
+    Examples
+    --------
+    >> monitor = MempoolMonitor()
+    >> monitor.run()
+    """
 
     def __init__(self):
+        """
+        Initialize self.
+        """
         try:
             app_config = load_config()
         except Exception as err:
-            log.exception("Unhandled exception whilst loading config.\nException: {}".format(err))
+            log.exception(f"Unhandled exception whilst loading config.\nException: {err}")
             sys.exit()
 
         try:
@@ -56,35 +85,37 @@ class MempoolMonitor(object):
 
             self.__global_frequency = app_config['GLOBAL']['frequency']
         except KeyError as k_err:
-            log.exception("Missing one or more mandatory config keys. Aborting.\n{}".format(k_err))
-            print("ERROR - Missing one or more mandatory config keys. Aborting.\n{}".format(k_err))
+            log.exception(f"Missing one or more mandatory config keys. Aborting.\n{k_err}")
+            print(f"ERROR - Missing one or more mandatory config keys. Aborting.\n{k_err}")
             sys.exit()
 
         self.__bootstrap = True # Run bootstrapping code at first
-
         self.__btc_rpc_connect = None
-
         self.__nr_ticks = 0
-
 
         self.db = SqlDbInterface(sql_db, sql_user, sql_pass, sql_host)
 
 
     def run(self):
         """
-        Main function of the monitor
+        Main function of the monitor - Starts the mempool monitor (request data from node, analyzes
+        for new transactions, and dumps data to database.)
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
         """
-
-
         while True:
             # Insantiate rpc interface
-            self.__btc_rpc_connect = AuthServiceProxy("http://{}:{}@{}:{}"
-                                                      .format(self.__rpc_user,
-                                                              self.__rpc_pass,
-                                                              self.__rpc_host,
-                                                              self.__rpc_port,
-                                                              timeout = self.__rpc_http_timeout))
-
+            self.__btc_rpc_connect = AuthServiceProxy(f"http://{self.__rpc_user}" +
+                                                      f":{self.__rpc_pass}" +
+                                                      f"@{self.__rpc_host}" +
+                                                      f":{self.__rpc_port}",
+                                                      timeout = int(self.__rpc_http_timeout))
 
             try:
                 blockchain_info = self.__btc_rpc_connect.getblockchaininfo()
@@ -100,8 +131,8 @@ class MempoolMonitor(object):
                 log.exception("Resuming operation, skipping current query...")
                 time.sleep(int(self.__global_frequency))
                 continue
-                
-            
+
+
             chain_height = blockchain_info["blocks"]
             bestblockhash = blockchain_info["bestblockhash"]
 
@@ -130,7 +161,7 @@ class MempoolMonitor(object):
                 continue
 
 
-
+            # Calculate mempool deltas (diff vs mempool at previous time)
             mempool_deltas = self.calculate_mempool_deltas(self.__mempool, mempool)
 
 
@@ -148,11 +179,14 @@ class MempoolMonitor(object):
             except Exception as sql_err:
                 log.exception("SQL exception: {}".format(sql_err))
 
-
+            # Log new block hash if detected
             if chain_height > self.__chain_height:
                 log.info("Tick: {} - Chain Height: {}\nBest block: {}".format(self.__nr_ticks,
                                                                               chain_height,
                                                                               bestblockhash))
+            # Else, send alive status if monitor still running
+            elif self.__nr_ticks%10==0:
+                log.info(f"Monitor running... current tick: {self.__nr_ticks}")
 
 
             self.__chain_height = chain_height
@@ -168,12 +202,28 @@ class MempoolMonitor(object):
 
     def bootstrap_mempool_monitor(self, blockchaininfo, mempool):
         """
-        Bootstrap the mempool monitor - Only runs at start up, if not run before or if daemon got
-        stopped and then restarted.
+        Bootstrap the mempool monitor - Only runs at start up, if monitor was never run before or if
+        daemon got stopped and then restarted.
 
-        NOTE: Returns False upon successfull bootstrap!!!!
-        To be used as   `self.__bootstrap = self.bootstrap_mempool_monitor`, which allows a simple 
-        `if self.__bootstrap` condition.
+        Parameters
+        ----------
+        blockchaininfo : JSON object
+            As returned by Bitcoin Core `getblockchaininfo` call.
+        
+        mempool : JSON object
+            As returned by Bitcoin Core `getrawmempool` call
+
+        Returns
+        -------
+        False : boolean
+            Returns False upon successfull bootstrap!!!! 
+        
+        Examples
+        --------
+        To be used as
+        >> self.__bootstrap = self.bootstrap_mempool_monitor 
+        which allows a simple 
+        >> if self.__bootstrap:
         """
         try:
             __nr_ticks = self.db.get_last_tick()
@@ -183,7 +233,7 @@ class MempoolMonitor(object):
             # Return True - i.e. monitor bootstrap failed and will need to be re-run
             return True
 
-        log.info("Nr ticks in database: {}".format(__nr_ticks))
+        log.info(f"Nr ticks in database: {__nr_ticks}")
 
         self.__chain_height = blockchaininfo["blocks"]
         self.__bestblockhash = blockchaininfo["bestblockhash"]
@@ -213,12 +263,21 @@ class MempoolMonitor(object):
 
     def calculate_mempool_deltas(self, mempool_t, mempool_tpone):
         """
-        Calculate the difference between two mempool snapshot
+        Calculate the difference between two mempool snapshot.
 
-        mempool_t     : Mempool snapshot at time `t`
-        mempool_tpone : Mempool snapshot at time `t+1`
+        Parameters
+        ----------
+        mempool_t : JSON object
+            Mempool snapshot at time `t`. As returned by Bitcoin Core `getrawmempool` call.
+        mempool_tpone : JSON object
+            Mempool snapshot at time `t+1`. As returned by Bitcoin Core `getrawmempool` call.
+
+        Returns
+        -------
+        {"ADD" : _mempool_add, "SUB" : _mempool_sub} : dict
+            Dictionary that containes the new ADDitions and the SUBtractions to the most recent
+            mempool, compared to the first one.
         """
-
         _txs_t = set(mempool_t)
         _txs_tpone = set(mempool_tpone)
 
@@ -231,18 +290,14 @@ class MempoolMonitor(object):
 
         return {"ADD" : _mempool_add,
                 "SUB" : _mempool_sub}
-        
-        
-        # print("DELTA ADD:\n{}".format(_delta_add))
-        # print("\nDELTA SUB:\n{}".format(_delta_sub))
-
-        
 
 
 
     def process_new_block(self, best_block_hash):
         """
         Analyze new block, and detect which transactions from the mempool got confirmed
+
+        TO DO: Unfinished function. Not needed for current code, might be completely unnecessary.
         """
         # _new_block_hash = self.__btc_rpc_connect.getblockhash(self.__chain_height)
         # print("New block detected - hash: {}".format(_new_block_hash))
@@ -263,11 +318,6 @@ class MempoolMonitor(object):
         _txs_in_block = set(_new_block['tx'])
         _txs_in_mempool = set(self.__mempool)
         _txs_not_in_mempool = _txs_in_block - _txs_in_mempool
-        
-
-        # pp(_new_block)
-
-
 
 
 
